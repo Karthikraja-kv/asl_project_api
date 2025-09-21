@@ -1,0 +1,17 @@
+# Virtual environment
+venv/
+
+# Data folders
+uploads/
+samples/
+processed/
+npy_data/
+
+# Python cache
+__pycache__/
+
+# Model files
+*.keras
+
+# Video files
+*.mov
