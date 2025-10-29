@@ -1,34 +1,45 @@
 # routers/predict_router.py
-from fastapi import APIRouter, UploadFile, File, HTTPException
-import shutil
 from pathlib import Path
-from services.predict_service import predict_signs
+import shutil
+from fastapi import APIRouter, UploadFile, File, HTTPException, status
 
-# Create router WITHOUT prefix here
+from services.predict_service import predict_signs, runtime_status
+
 router = APIRouter(tags=["Predict"])
-
-# Ensure uploads directory exists
-UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
+UPLOAD_DIR = Path(__file__).resolve().parents[1] / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+@router.get("/health")
+def health():
+    return runtime_status()
 
 @router.post("/")
 async def predict(file: UploadFile = File(...)):
     """
-    Predict multiple ASL signs from an uploaded video.
+    Upload a video (.mp4/.mov), get predicted label.
+    Will return 503 with guidance if model/labels are not ready yet.
     """
+    if not file.filename.lower().endswith((".mp4", ".mov")):
+        raise HTTPException(status_code=400, detail="Only .mp4 and .mov are supported.")
+
+    temp_path = UPLOAD_DIR / file.filename
     try:
-        # Save uploaded video temporarily
-        temp_path = UPLOAD_DIR / file.filename
-        with open(temp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        with open(temp_path, "wb") as buf:
+            shutil.copyfileobj(file.file, buf)
 
-        # Run prediction
-        predicted_labels = predict_signs(temp_path)
+        result = predict_signs(temp_path)  # may raise FileNotFoundError (handled below)
+        return {"result": result}
 
-        # Remove temp file
-        temp_path.unlink(missing_ok=True)
-
-        return {"predicted_labels": predicted_labels}
-
+    except FileNotFoundError as e:
+        # Model or label_map missing → clear guidance, no startup crash
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
